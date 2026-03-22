@@ -35,7 +35,7 @@ param(
     [ValidateSet('single', 'standard')]
     [string]$Type = 'single',
 
-    [string]$InstallDir = "$env:LOCALAPPDATA\caldwell-syspro-mcp"
+    [string]$InstallDir = "C:\Tools\caldwell-syspro-mcp"
 )
 
 $ErrorActionPreference = 'Stop'
