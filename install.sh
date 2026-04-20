@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Caldwell SYSPRO MCP Server — Linux Installer
+# Caldwell SYSPRO MCP Server — Linux / macOS Installer
 # ============================================================================
 # One-liner install:
 #   curl -fsSL https://raw.githubusercontent.com/mepapps/caldwell-syspro-mcp-releases/main/install.sh | bash
 #
+# Auto-detects platform:
+#   - Linux x86_64        → linux-x64
+#   - macOS Apple Silicon → osx-arm64
+#   - macOS Intel         → osx-x64
+#
 # Options:
 #   --channel beta          Install beta channel (default: latest)
 #   --install-dir /path     Custom install directory
+#   --platform <id>         Override platform detection (linux-x64|osx-arm64|osx-x64)
 #
 # Examples:
 #   curl -fsSL .../install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --channel beta
 #   curl -fsSL .../install.sh | bash -s -- --install-dir /opt/caldwell-mcp
+#   curl -fsSL .../install.sh | bash -s -- --platform osx-x64    # force Intel build on M1 (Rosetta 2)
 # ============================================================================
 
 set -euo pipefail
 
 CHANNEL="latest"
-INSTALL_DIR="${HOME}/.local/share/caldwell-syspro-mcp"
+INSTALL_DIR=""
+PLATFORM_OVERRIDE=""
 REPO="mepapps/caldwell-syspro-mcp-releases"
 
 # ── Parse arguments ─────────────────────────────────────────────────
@@ -32,12 +40,17 @@ while [[ $# -gt 0 ]]; do
             INSTALL_DIR="$2"
             shift 2
             ;;
+        --platform)
+            PLATFORM_OVERRIDE="$2"
+            shift 2
+            ;;
         --help|-h)
-            echo "Usage: install.sh [--channel latest|beta] [--install-dir /path]"
+            echo "Usage: install.sh [--channel latest|beta] [--install-dir /path] [--platform linux-x64|osx-arm64|osx-x64]"
             echo ""
             echo "Options:"
             echo "  --channel      Release channel: 'latest' (default) or 'beta'"
             echo "  --install-dir  Installation directory (default: ~/.local/share/caldwell-syspro-mcp)"
+            echo "  --platform     Override auto-detected platform"
             exit 0
             ;;
         *)
@@ -47,11 +60,63 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# ── Detect platform ─────────────────────────────────────────────────
+detect_platform() {
+    local os arch
+    os="$(uname -s)"
+    arch="$(uname -m)"
+
+    case "$os" in
+        Linux)
+            case "$arch" in
+                x86_64|amd64) echo "linux-x64" ;;
+                *) echo "  [ERROR] Unsupported Linux architecture: $arch" >&2; exit 1 ;;
+            esac
+            ;;
+        Darwin)
+            case "$arch" in
+                arm64|aarch64) echo "osx-arm64" ;;
+                x86_64) echo "osx-x64" ;;
+                *) echo "  [ERROR] Unsupported macOS architecture: $arch" >&2; exit 1 ;;
+            esac
+            ;;
+        *)
+            echo "  [ERROR] Unsupported OS: $os" >&2
+            echo "  This installer supports Linux and macOS. Use install.ps1 on Windows." >&2
+            exit 1
+            ;;
+    esac
+}
+
+if [[ -n "$PLATFORM_OVERRIDE" ]]; then
+    PLATFORM="$PLATFORM_OVERRIDE"
+else
+    PLATFORM="$(detect_platform)"
+fi
+
+case "$PLATFORM" in
+    linux-x64|osx-arm64|osx-x64) ;;
+    *)
+        echo "  [ERROR] Unknown --platform: $PLATFORM"
+        echo "  Valid: linux-x64, osx-arm64, osx-x64"
+        exit 1
+        ;;
+esac
+
+# Default install dir per platform
+if [[ -z "$INSTALL_DIR" ]]; then
+    case "$PLATFORM" in
+        osx-*)  INSTALL_DIR="${HOME}/Library/Application Support/caldwell-syspro-mcp" ;;
+        *)      INSTALL_DIR="${HOME}/.local/share/caldwell-syspro-mcp" ;;
+    esac
+fi
+
 echo ""
 echo "  ============================================================"
-echo "   Caldwell SYSPRO MCP Server — Linux Installer"
+echo "   Caldwell SYSPRO MCP Server — Installer"
 echo "  ============================================================"
 echo ""
+echo "  Platform:   ${PLATFORM}"
 echo "  Channel:    ${CHANNEL}"
 echo "  Install to: ${INSTALL_DIR}"
 echo ""
@@ -60,6 +125,9 @@ echo ""
 for cmd in curl jq tar; do
     if ! command -v "$cmd" &>/dev/null; then
         echo "  [ERROR] Required command '${cmd}' not found. Install it and try again."
+        if [[ "$PLATFORM" == osx-* ]]; then
+            echo "         On macOS:  brew install ${cmd}"
+        fi
         exit 1
     fi
 done
@@ -91,12 +159,24 @@ TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
 RELEASE_NAME=$(echo "$RELEASE_JSON" | jq -r '.name')
 echo "  Found: ${RELEASE_NAME} (${TAG})"
 
-# ── Find the linux-x64 asset ────────────────────────────────────────
-DOWNLOAD_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | test("linux-x64.*\\.tar\\.gz$")) | .browser_download_url' | head -1)
+# ── Find the platform-specific asset ────────────────────────────────
+# Asset names look like: caldwell-syspro-mcp-vX.Y.Z-single-<platform>.tar.gz
+ASSET_PATTERN="${PLATFORM}\\.tar\\.gz$"
+DOWNLOAD_URL=$(echo "$RELEASE_JSON" \
+    | jq -r --arg pat "$ASSET_PATTERN" '.assets[] | select(.name | test($pat)) | .browser_download_url' \
+    | head -1)
 
 if [[ -z "$DOWNLOAD_URL" ]] || [[ "$DOWNLOAD_URL" == "null" ]]; then
-    echo "  [ERROR] No linux-x64 tar.gz asset found in release ${TAG}."
-    echo "  This release may predate Linux support."
+    echo "  [ERROR] No ${PLATFORM} tar.gz asset found in release ${TAG}."
+    if [[ "$PLATFORM" == "osx-arm64" ]]; then
+        echo "  This release may predate macOS Apple Silicon support."
+        echo "  You can try the Intel build under Rosetta 2:"
+        echo "      curl -fsSL .../install.sh | bash -s -- --platform osx-x64"
+    elif [[ "$PLATFORM" == "osx-x64" ]]; then
+        echo "  This release may predate macOS support."
+    else
+        echo "  This release may predate ${PLATFORM} support."
+    fi
     echo "  Visit https://github.com/${REPO}/releases/tag/${TAG} to check available downloads."
     exit 1
 fi
@@ -114,6 +194,7 @@ curl -fsSL -o "$TEMP_TARBALL" "$DOWNLOAD_URL" || {
     exit 1
 }
 
+# du -m differs slightly on macOS vs Linux but both work for an approximate MB size
 SIZE_MB=$(du -m "$TEMP_TARBALL" | cut -f1)
 echo "  [OK] Downloaded (${SIZE_MB} MB)"
 
@@ -121,16 +202,16 @@ echo "  [OK] Downloaded (${SIZE_MB} MB)"
 BACKUP_DIR="${TEMP_DIR}/backup"
 mkdir -p "$BACKUP_DIR"
 
-for f in connections.json key-entities.custom.json; do
+for f in connections.json key-entities.custom.json appsettings.json; do
     if [[ -f "${INSTALL_DIR}/${f}" ]]; then
         cp "${INSTALL_DIR}/${f}" "${BACKUP_DIR}/${f}"
         echo "  [OK] Backed up ${f}"
     fi
 done
 
-# Also preserve playbooks directory
+# Also preserve playbooks directory (user may have added custom ones)
 if [[ -d "${INSTALL_DIR}/playbooks" ]]; then
-    cp -r "${INSTALL_DIR}/playbooks" "${BACKUP_DIR}/playbooks"
+    cp -R "${INSTALL_DIR}/playbooks" "${BACKUP_DIR}/playbooks"
     echo "  [OK] Backed up playbooks/"
 fi
 
@@ -146,10 +227,25 @@ if [[ -f "$EXE_PATH" ]]; then
     chmod +x "$EXE_PATH"
 fi
 
+# Make shell scripts executable too
+for s in install.sh update.sh diagnose-syspro.sh; do
+    if [[ -f "${INSTALL_DIR}/${s}" ]]; then
+        chmod +x "${INSTALL_DIR}/${s}"
+    fi
+done
+
+# ── macOS: clear quarantine attribute so Gatekeeper doesn't block ──
+if [[ "$PLATFORM" == osx-* ]] && command -v xattr &>/dev/null; then
+    # Strip com.apple.quarantine from the binary and any bundled libs.
+    # Without this, the first launch after curl|bash triggers a
+    # "cannot be opened because the developer cannot be verified" prompt.
+    xattr -dr com.apple.quarantine "$INSTALL_DIR" 2>/dev/null || true
+fi
+
 echo "  [OK] Installed to ${INSTALL_DIR}"
 
 # ── Restore user files ──────────────────────────────────────────────
-for f in connections.json key-entities.custom.json; do
+for f in connections.json key-entities.custom.json appsettings.json; do
     if [[ -f "${BACKUP_DIR}/${f}" ]]; then
         cp "${BACKUP_DIR}/${f}" "${INSTALL_DIR}/${f}"
         echo "  [OK] Restored ${f}"
@@ -157,7 +253,8 @@ for f in connections.json key-entities.custom.json; do
 done
 
 if [[ -d "${BACKUP_DIR}/playbooks" ]]; then
-    cp -r "${BACKUP_DIR}/playbooks" "${INSTALL_DIR}/playbooks"
+    # Copy the user's playbooks back, preserving any new shipped ones that don't conflict
+    cp -R "${BACKUP_DIR}/playbooks/." "${INSTALL_DIR}/playbooks/"
     echo "  [OK] Restored playbooks/"
 fi
 
@@ -176,7 +273,7 @@ rm -rf "$TEMP_DIR"
 # ── Done ────────────────────────────────────────────────────────────
 echo ""
 echo "  ============================================================"
-echo "   INSTALLED SUCCESSFULLY — ${TAG}"
+echo "   INSTALLED SUCCESSFULLY — ${TAG} (${PLATFORM})"
 echo "  ============================================================"
 echo ""
 echo "  Location: ${INSTALL_DIR}"
@@ -207,7 +304,19 @@ echo "         }"
 echo "       }"
 echo "     }"
 echo ""
+if [[ "$PLATFORM" == osx-* ]]; then
+echo "     Claude Desktop (~/Library/Application Support/Claude/claude_desktop_config.json):"
+echo "     {"
+echo "       \"mcpServers\": {"
+echo "         \"caldwell-syspro\": {"
+echo "           \"command\": \"${EXE_PATH}\""
+echo "         }"
+echo "       }"
+echo "     }"
+echo ""
+fi
 echo "  3. Restart your MCP client"
 echo ""
-echo "  To update later, re-run this install command."
+echo "  To update later, re-run this install command, or run:"
+echo "      \"${INSTALL_DIR}/update.sh\""
 echo ""

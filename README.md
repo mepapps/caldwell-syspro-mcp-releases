@@ -44,7 +44,24 @@ irm https://raw.githubusercontent.com/mepapps/caldwell-syspro-mcp-releases/main/
 curl -fsSL https://raw.githubusercontent.com/mepapps/caldwell-syspro-mcp-releases/main/install.sh | bash
 ```
 
-Installs to `C:\Tools\caldwell-syspro-mcp\` (Windows) or `~/.local/share/caldwell-syspro-mcp/` (Linux). Takes about 30 seconds.
+**macOS** — open Terminal and run the same command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mepapps/caldwell-syspro-mcp-releases/main/install.sh | bash
+```
+
+The installer auto-detects Apple Silicon (`osx-arm64`) and Intel (`osx-x64`).
+Requires `curl`, `jq`, and `tar` — install jq with `brew install jq` if needed.
+
+Default install locations:
+
+| Platform | Location |
+|----------|----------|
+| Windows | `C:\Tools\caldwell-syspro-mcp\` |
+| Linux   | `~/.local/share/caldwell-syspro-mcp/` |
+| macOS   | `~/Library/Application Support/caldwell-syspro-mcp/` |
+
+Takes about 30 seconds.
 
 ## Getting started
 
@@ -52,7 +69,13 @@ Installs to `C:\Tools\caldwell-syspro-mcp\` (Windows) or `~/.local/share/caldwel
 
 **Windows:** Double-click `register-mcp.cmd` in the install folder. It automatically finds and configures Claude Desktop, Cursor, and Claude Code.
 
-**Linux:** The install script prints the JSON to add to your MCP client config.
+**Linux / macOS:** The install script prints the JSON to add to your MCP client config. Common config paths on macOS:
+
+- Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Cursor: `~/.cursor/mcp.json`
+- Claude Code: `~/.claude.json`
+
+Set `"command"` to the absolute path of the extracted `Caldwell.Syspro.Mcp.Server` binary.
 
 ### 2. Add your database connections
 
@@ -85,7 +108,8 @@ Try: *"What connections are available?"* — the AI will list your configured da
 
 ## Updating
 
-Double-click `update-single.cmd` in the install folder, or re-run the install command above.
+- **Windows:** double-click `update-single.cmd` in the install folder, or re-run the install command above.
+- **Linux / macOS:** run `./update.sh` in the install folder, or re-run the `curl ... | bash` install command above.
 
 ## Links
 
