@@ -165,6 +165,71 @@ if (-not (Test-Path $connectionsPath) -and (Test-Path $samplePath)) {
     Write-Host "  [OK] Created connections.json from sample" -ForegroundColor Green
 }
 
+# ── DevHub integration prompt (skip on re-install if already configured) ─
+$appSettingsPath = Join-Path $InstallDir 'appsettings.json'
+$promptForDevHub = $true
+if (Test-Path $appSettingsPath) {
+    try {
+        $existing = Get-Content $appSettingsPath -Raw | ConvertFrom-Json
+        if ($existing.DevHub -and $existing.DevHub.ApiKey) {
+            $promptForDevHub = $false
+            Write-Host "  [OK] DevHub already configured (user: $($existing.DevHub.UserName))" -ForegroundColor Green
+        }
+    } catch { /* fall through to prompt */ }
+}
+
+if ($promptForDevHub -and -not $env:CI -and [Environment]::UserInteractive) {
+    Write-Host ""
+    Write-Host "  ── DevHub integration ──────────────────────────────────────" -ForegroundColor Cyan
+    Write-Host "  DevHub stores your shared playbooks and team-wide connections" -ForegroundColor Gray
+    Write-Host "  centrally. Skip this if you don't have a DevHub API key yet —" -ForegroundColor Gray
+    Write-Host "  the server will run in local-only mode and you can configure" -ForegroundColor Gray
+    Write-Host "  DevHub later by editing appsettings.json." -ForegroundColor Gray
+    Write-Host ""
+
+    $apiKey = Read-Host "  DevHub API key (leave blank to skip)"
+    if (-not [string]::IsNullOrWhiteSpace($apiKey)) {
+        $defaultUser = ""
+        try {
+            $defaultUser = (& whoami /upn 2>$null).Trim()
+        } catch { $defaultUser = "" }
+        if ([string]::IsNullOrWhiteSpace($defaultUser) -or -not $defaultUser.Contains('@')) {
+            try { $defaultUser = (& git config --get user.email 2>$null).Trim() } catch { $defaultUser = "" }
+        }
+        $userPrompt = if ([string]::IsNullOrWhiteSpace($defaultUser)) {
+            "  DevHub username (UPN/email)"
+        } else {
+            "  DevHub username (UPN/email) [default: $defaultUser]"
+        }
+        $userName = Read-Host $userPrompt
+        if ([string]::IsNullOrWhiteSpace($userName)) { $userName = $defaultUser }
+        $baseUrl = Read-Host "  DevHub base URL [default: https://devhub.caldwell.app]"
+        if ([string]::IsNullOrWhiteSpace($baseUrl)) { $baseUrl = 'https://devhub.caldwell.app' }
+
+        # Merge into appsettings.json. Preserves whatever else is in there.
+        $settings = if (Test-Path $appSettingsPath) {
+            Get-Content $appSettingsPath -Raw | ConvertFrom-Json
+        } else { [PSCustomObject]@{} }
+        if (-not $settings.DevHub) {
+            $settings | Add-Member -MemberType NoteProperty -Name DevHub -Value ([PSCustomObject]@{}) -Force
+        }
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name BaseUrl -Value $baseUrl -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name ApiKey -Value $apiKey -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name UserName -Value $userName -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name EnablePlaybookSync -Value $true -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name EnableConnectionSync -Value $true -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name CacheTtlSeconds -Value 60 -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name RequestTimeoutSeconds -Value 8 -Force
+        $settings.DevHub | Add-Member -MemberType NoteProperty -Name OfflineModeBehavior -Value 'FallbackToLocal' -Force
+
+        $settings | ConvertTo-Json -Depth 10 | Set-Content $appSettingsPath -Encoding UTF8
+        Write-Host "  [OK] DevHub configured for $userName" -ForegroundColor Green
+        Write-Host "  [INFO] Local connections.json + playbooks/ will auto-import to DevHub on next start." -ForegroundColor Gray
+    } else {
+        Write-Host "  [INFO] Skipping DevHub setup. Edit appsettings.json later to enable it." -ForegroundColor Yellow
+    }
+}
+
 # ── Determine exe name ──────────────────────────────────────────────
 $exePath = Join-Path $InstallDir 'Caldwell.Syspro.Mcp.Server.exe'
 if (-not (Test-Path $exePath)) {

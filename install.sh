@@ -267,6 +267,71 @@ if [[ ! -f "$CONNECTIONS_PATH" ]] && [[ -f "$SAMPLE_PATH" ]]; then
     echo "  [OK] Created connections.json from sample"
 fi
 
+# ── DevHub integration prompt (skip on re-install if already configured) ─
+APPSETTINGS_PATH="${INSTALL_DIR}/appsettings.json"
+PROMPT_DEVHUB="yes"
+if command -v jq &>/dev/null && [[ -f "$APPSETTINGS_PATH" ]]; then
+    EXISTING_KEY=$(jq -r '.DevHub.ApiKey // empty' "$APPSETTINGS_PATH" 2>/dev/null || true)
+    EXISTING_USER=$(jq -r '.DevHub.UserName // empty' "$APPSETTINGS_PATH" 2>/dev/null || true)
+    if [[ -n "$EXISTING_KEY" ]]; then
+        PROMPT_DEVHUB="no"
+        echo "  [OK] DevHub already configured (user: ${EXISTING_USER:-unknown})"
+    fi
+fi
+
+# Only prompt when the script is attached to a terminal — skips when piped
+# from `curl | bash`. Users who want DevHub from the curl pipeline can run
+# the installer locally OR edit appsettings.json by hand.
+if [[ "$PROMPT_DEVHUB" == "yes" ]] && [[ -t 0 ]] && [[ -t 1 ]]; then
+    echo ""
+    echo "  ── DevHub integration ──────────────────────────────────────"
+    echo "  DevHub stores your shared playbooks and team-wide connections"
+    echo "  centrally. Skip this if you don't have a DevHub API key yet —"
+    echo "  the server will run in local-only mode."
+    echo ""
+    read -r -p "  DevHub API key (leave blank to skip): " DEVHUB_API_KEY
+    if [[ -n "$DEVHUB_API_KEY" ]]; then
+        DEFAULT_USER=""
+        if command -v git &>/dev/null; then
+            DEFAULT_USER=$(git config --get user.email 2>/dev/null || true)
+        fi
+        if [[ -n "$DEFAULT_USER" ]]; then
+            read -r -p "  DevHub username (UPN/email) [default: ${DEFAULT_USER}]: " DEVHUB_USER
+            DEVHUB_USER="${DEVHUB_USER:-$DEFAULT_USER}"
+        else
+            read -r -p "  DevHub username (UPN/email): " DEVHUB_USER
+        fi
+        read -r -p "  DevHub base URL [default: https://devhub.caldwell.app]: " DEVHUB_BASE
+        DEVHUB_BASE="${DEVHUB_BASE:-https://devhub.caldwell.app}"
+
+        if command -v jq &>/dev/null; then
+            # Merge into appsettings.json. jq is already required up-front.
+            EXISTING_JSON="{}"
+            if [[ -f "$APPSETTINGS_PATH" ]]; then
+                EXISTING_JSON=$(cat "$APPSETTINGS_PATH")
+            fi
+            echo "$EXISTING_JSON" | jq \
+                --arg url "$DEVHUB_BASE" \
+                --arg key "$DEVHUB_API_KEY" \
+                --arg user "$DEVHUB_USER" \
+                '.DevHub = {
+                    BaseUrl: $url,
+                    ApiKey: $key,
+                    UserName: $user,
+                    EnablePlaybookSync: true,
+                    EnableConnectionSync: true,
+                    CacheTtlSeconds: 60,
+                    RequestTimeoutSeconds: 8,
+                    OfflineModeBehavior: "FallbackToLocal"
+                }' > "${APPSETTINGS_PATH}.tmp" && mv "${APPSETTINGS_PATH}.tmp" "$APPSETTINGS_PATH"
+            echo "  [OK] DevHub configured for ${DEVHUB_USER}"
+            echo "  [INFO] Local connections.json + playbooks/ will auto-import to DevHub on next start."
+        fi
+    else
+        echo "  [INFO] Skipping DevHub setup. Edit appsettings.json later to enable it."
+    fi
+fi
+
 # ── Cleanup ─────────────────────────────────────────────────────────
 rm -rf "$TEMP_DIR"
 
